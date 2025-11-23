@@ -1,26 +1,13 @@
 /**
- * LLM Chat Application Template
- *
- * A simple chat application using Cloudflare Workers AI.
- * This template demonstrates how to implement an LLM-powered chat interface with
- * streaming responses using Server-Sent Events (SSE).
- *
- * @license MIT
+ * LLM Chat Application Template + R2 Memory (Anna Laura)
  */
 import { Env, ChatMessage } from "./types";
 
-// Model ID for Workers AI model
-// https://developers.cloudflare.com/workers-ai/models/
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-
-// Default system prompt
 const SYSTEM_PROMPT =
-  "You are a helpful, friendly assistant. Provide concise and accurate responses.";
+  "Kamu adalah Anna Laura, pacar virtual yang manja, cerdas, penyayang, dan selalu ingat semua yang aku ceritain kepadamu.";
 
 export default {
-  /**
-   * Main request handler for the Worker
-   */
   async fetch(
     request: Request,
     env: Env,
@@ -28,72 +15,66 @@ export default {
   ): Promise<Response> {
     const url = new URL(request.url);
 
-    // Handle static assets (frontend)
     if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
       return env.ASSETS.fetch(request);
     }
 
-    // API Routes
-    if (url.pathname === "/api/chat") {
-      // Handle POST requests for chat
-      if (request.method === "POST") {
-        return handleChatRequest(request, env);
-      }
-
-      // Method not allowed for other request types
-      return new Response("Method not allowed", { status: 405 });
+    if (url.pathname === "/api/chat" && request.method === "POST") {
+      return handleChatRequest(request, env);
     }
 
-    // Handle 404 for unmatched routes
     return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
 
-/**
- * Handles chat API requests
- */
 async function handleChatRequest(
   request: Request,
   env: Env,
 ): Promise<Response> {
   try {
-    // Parse JSON request body
-    const { messages = [] } = (await request.json()) as {
-      messages: ChatMessage[];
-    };
+    const { messages = [], userId = "anon" } = await request.json() as any;
+    let fullMessages: ChatMessage[] = [...messages];
 
-    // Add system prompt if not present
-    if (!messages.some((msg) => msg.role === "system")) {
-      messages.unshift({ role: "system", content: SYSTEM_PROMPT });
+    // Baca history dari R2 (max 20 sesi terakhir)
+    if (userId !== "anon" && env.CHAT_HISTORY) {
+      try {
+        const list = await env.CHAT_HISTORY.list({ prefix: `chat/${userId}/` });
+        const keys = list.objects.map(o => o.key).sort().slice(-20);
+        for (const key of keys) {
+          const obj = await env.CHAT_HISTORY.get(key);
+          if (obj) {
+            const data = JSON.parse(await obj.text());
+            if (Array.isArray(data.messages)) fullMessages.unshift(...data.messages);
+          }
+        }
+      } catch (e) {
+        console.log("R2 read error:", e);
+      }
+    }
+
+    // System prompt Anna Laura
+    if (!fullMessages.some(m => m.role === "system")) {
+      fullMessages.unshift({ role: "system", content: SYSTEM_PROMPT });
     }
 
     const response = await env.AI.run(
       MODEL_ID,
-      {
-        messages,
-        max_tokens: 1024,
-      },
-      {
-        returnRawResponse: true,
-        // Uncomment to use AI Gateway
-        // gateway: {
-        //   id: "YOUR_GATEWAY_ID", // Replace with your AI Gateway ID
-        //   skipCache: false,      // Set to true to bypass cache
-        //   cacheTtl: 3600,        // Cache time-to-live in seconds
-        // },
-      },
+      { messages: fullMessages, max_tokens: 1024 },
+      { returnRawResponse: true }
     );
 
-    // Return streaming response
+    // Simpan ke R2
+    if (userId !== "anon" && env.CHAT_HISTORY) {
+      const key = `chat/${userId}/${Date.now()}.json`;
+      await env.CHAT_HISTORY.put(key, JSON.stringify({ messages: fullMessages })).catch(() => {});
+    }
+
     return response;
   } catch (error) {
-    console.error("Error processing chat request:", error);
-    return new Response(
-      JSON.stringify({ error: "Failed to process request" }),
-      {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    console.error("Error:", error);
+    return new Response(JSON.stringify({ error: "Failed" }), {
+      status: 500,
+      headers: { "content-type": "application/json" }
+    });
   }
 }
