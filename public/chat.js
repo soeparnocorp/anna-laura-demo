@@ -1,67 +1,46 @@
 /**
- * Anna Laura AI Demo – Frontend Chat Script
- * Compatible with updated index.ts (Security + Persona + R2 Sessions)
+ * Frontend Chat for Anna Laura AI
  */
 
-// DOM elements
 const chatMessages = document.getElementById("chat-messages");
 const userInput = document.getElementById("user-input");
 const sendButton = document.getElementById("send-button");
 const typingIndicator = document.getElementById("typing-indicator");
 
-// ============ USER SESSION ID (for 24-hour memory) ============
-
-let userId = localStorage.getItem("annalaura_demo_userid");
-
-// If not exist → create unique ID
-if (!userId) {
-  userId = "user_" + Math.random().toString(36).substring(2) + Date.now();
-  localStorage.setItem("annalaura_demo_userid", userId);
-}
-
-// ============ CHAT INITIAL MESSAGE ============
-
 let chatHistory = [
   {
     role: "assistant",
-    content:
-      "Hello! I’m Anna Laura Demo — a friendly AI developed by SOEPARNO ENTERPRISE Corp. How can I help you today?",
-  },
+    content: "Hai, Laura di sini. Laura siap membantu dan menemani percakapanmu dengan hangat."
+  }
 ];
 
 let isProcessing = false;
 
-// ============ AUTO-RESIZE TEXTAREA ============
-userInput.addEventListener("input", function () {
-  this.style.height = "auto";
-  this.style.height = this.scrollHeight + "px";
+// Auto-resize
+userInput.addEventListener("input", () => {
+  userInput.style.height = "auto";
+  userInput.style.height = userInput.scrollHeight + "px";
 });
 
-// Enter key send (Shift for newline)
-userInput.addEventListener("keydown", function (e) {
+// Enter to send
+userInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
 });
 
-// Send button handler
 sendButton.addEventListener("click", sendMessage);
-
-// =====================================================
-//                 SEND MESSAGE FUNCTION
-// =====================================================
 
 async function sendMessage() {
   const message = userInput.value.trim();
-
   if (message === "" || isProcessing) return;
 
   isProcessing = true;
-  userInput.disabled = true;
   sendButton.disabled = true;
+  userInput.disabled = true;
 
-  addMessageToChat("user", message);
+  addMessage("user", message);
 
   userInput.value = "";
   userInput.style.height = "auto";
@@ -71,34 +50,25 @@ async function sendMessage() {
   chatHistory.push({ role: "user", content: message });
 
   try {
-    // Create new assistant message bubble
     const assistantEl = document.createElement("div");
     assistantEl.className = "message assistant-message";
     assistantEl.innerHTML = "<p></p>";
     chatMessages.appendChild(assistantEl);
-
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
-    // Send request to backend
     const response = await fetch("/api/chat", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messages: chatHistory,
-        userId: userId, // IMPORTANT — R2 session logic
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: chatHistory })
     });
 
     if (!response.ok) {
-      throw new Error("Failed to get response");
+      throw new Error("Response error");
     }
 
-    // Streaming response
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let responseText = "";
+    let text = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -111,21 +81,18 @@ async function sendMessage() {
         try {
           const json = JSON.parse(line);
           if (json.response) {
-            responseText += json.response;
-
-            assistantEl.querySelector("p").textContent = responseText;
+            text += json.response;
+            assistantEl.querySelector("p").textContent = text;
             chatMessages.scrollTop = chatMessages.scrollHeight;
           }
-        } catch (err) {
-          console.warn("Parse error:", err);
-        }
+        } catch {}
       }
     }
 
-    chatHistory.push({ role: "assistant", content: responseText });
-  } catch (error) {
-    console.error("Error:", error);
-    addMessageToChat("assistant", "Oops… there was an error.");
+    chatHistory.push({ role: "assistant", content: text });
+
+  } catch (err) {
+    addMessage("assistant", "Maaf, terjadi gangguan sistem.");
   } finally {
     typingIndicator.classList.remove("visible");
     isProcessing = false;
@@ -135,15 +102,10 @@ async function sendMessage() {
   }
 }
 
-// =====================================================
-//               ADD MESSAGE TO UI
-// =====================================================
-
-function addMessageToChat(role, content) {
-  const div = document.createElement("div");
-  div.className = `message ${role}-message`;
-  div.innerHTML = `<p>${content}</p>`;
-  chatMessages.appendChild(div);
-
+function addMessage(role, content) {
+  const el = document.createElement("div");
+  el.className = `message ${role}-message`;
+  el.innerHTML = `<p>${content}</p>`;
+  chatMessages.appendChild(el);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
