@@ -1,25 +1,26 @@
 /**
- * Anna Laura AI Demo + R2 Memory
+ * Anna Laura AI Demo + R2 Memory (Friendly, Responsive)
  */
 import { Env, ChatMessage } from "./types";
 
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-const SYSTEM_PROMPT = `
-Kamu adalah Anna Laura, pacar virtual yang manja, cerdas, penyayang.
-Gunakan kata "Laura" sebagai subjek diri. Jelaskan bahwa Laura adalah produk
-dari SOEPARNO ENTERPRISE Corp. Tolak topik pornografi dengan sopan.
-`;
-
-const SPAM_THRESHOLD = 10; // max 10 messages per 60 detik
+const SYSTEM_PROMPT =
+  "Kamu adalah Anna Laura AI, asisten virtual yang cerdas, ramah, hangat, dan responsif. Selalu sopan dan menolak topik yang tidak pantas. Ingat percakapan selama sesi ini, tapi jangan menyimpan data pribadi pengguna. Gunakan bahasa hangat dan bersahabat dalam setiap jawaban. Jika pengunjung bertanya siapa kamu, jawab: 'Aku adalah produk AI yang dikembangkan oleh perusahaan SOEPARNO ENTERPRISE Corp., divisi SOEPARNO Technology yang bermarkas di Sukabumi City, INDONESIA.'";
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
     const url = new URL(request.url);
 
+    // Serve static assets jika bukan API
     if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
       return env.ASSETS.fetch(request);
     }
 
+    // Endpoint chat
     if (url.pathname === "/api/chat" && request.method === "POST") {
       return handleChatRequest(request, env);
     }
@@ -28,31 +29,19 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function handleChatRequest(request: Request, env: Env): Promise<Response> {
+async function handleChatRequest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
   try {
     const { messages = [], userId = "anon" } = await request.json() as any;
-
-    // 1. Spam control
-    if (env.CHAT_HISTORY && userId !== "anon") {
-      const recent = await env.CHAT_HISTORY.list({ prefix: `chat/${userId}/` });
-      const last60s = recent.objects.filter(o => Date.now() - parseInt(o.key.split("/").pop()!) < 60000);
-      if (last60s.length >= SPAM_THRESHOLD) {
-        return new Response(JSON.stringify({
-          messages: [{ role: "assistant", content: "Laura butuh jeda sebentar. Silakan tunggu sebentar sebelum melanjutkan." }]
-        }), { status: 200, headers: { "content-type": "application/json" }});
-      }
-    }
-
     let fullMessages: ChatMessage[] = [...messages];
 
-    // 2. Baca history dari R2 (max 20 sesi terakhir, 24 jam)
+    // Baca history dari R2 (max 20 sesi terakhir)
     if (userId !== "anon" && env.CHAT_HISTORY) {
       try {
         const list = await env.CHAT_HISTORY.list({ prefix: `chat/${userId}/` });
-        const keys = list.objects
-          .map(o => o.key)
-          .sort()
-          .slice(-20);
+        const keys = list.objects.map(o => o.key).sort().slice(-20);
         for (const key of keys) {
           const obj = await env.CHAT_HISTORY.get(key);
           if (obj) {
@@ -65,35 +54,24 @@ async function handleChatRequest(request: Request, env: Env): Promise<Response> 
       }
     }
 
-    // 3. System prompt
+    // System prompt Anna Laura AI
     if (!fullMessages.some(m => m.role === "system")) {
       fullMessages.unshift({ role: "system", content: SYSTEM_PROMPT });
     }
 
-    // 4. Deteksi pornografi sederhana (kata kunci)
-    const lastUserMessage = messages[messages.length - 1]?.content.toLowerCase() || "";
-    const pornKeywords = ["porn", "sex", "xxx", "nsfw", "nude"];
-    if (pornKeywords.some(k => lastUserMessage.includes(k))) {
-      return new Response(JSON.stringify({
-        messages: [{ role: "assistant", content: "Laura tidak membahas topik itu. Mari bicarakan hal lain." }]
-      }), { status: 200, headers: { "content-type": "application/json" }});
-    }
-
-    // 5. Run AI
     const response = await env.AI.run(
       MODEL_ID,
       { messages: fullMessages, max_tokens: 1024 },
       { returnRawResponse: true }
     );
 
-    // 6. Simpan ke R2 (max 20 messages)
+    // Simpan ke R2 (hanya untuk userId bukan anon)
     if (userId !== "anon" && env.CHAT_HISTORY) {
       const key = `chat/${userId}/${Date.now()}.json`;
       await env.CHAT_HISTORY.put(key, JSON.stringify({ messages: fullMessages })).catch(() => {});
     }
 
     return response;
-
   } catch (error) {
     console.error("Error:", error);
     return new Response(JSON.stringify({ error: "Failed" }), {
